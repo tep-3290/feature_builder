@@ -1,0 +1,927 @@
+# ============================================================
+# PART 1 / 5 : 高速インジケータ（ATR / RSI / MACD / DTW）
+# ============================================================
+
+import numpy as np
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# =========================================
+# 入出力パス（MQL4 連携）
+# =========================================
+input_path = r"C:\Users\arei_\AppData\Roaming\MetaQuotes\Terminal\34B08C83A5AAE27A4079DE708E60511E\MQL4\Files\USDJPY_py.csv"
+output_path = r"C:\Users\arei_\AppData\Roaming\MetaQuotes\Terminal\34B08C83A5AAE27A4079DE708E60511E\MQL4\Files\nextbar.txt"
+
+# 類似パターンの最大数
+MAX_HISTORY_WINDOWS = 2000
+
+# 類似度の時間減衰係数
+TIME_DECAY_TAU = 300.0
+# ------------------------------------------------------------
+# fast_atr : 高速 ATR（Wilder EMA）
+# ------------------------------------------------------------
+def fast_atr(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int) -> np.ndarray:
+    """
+    高速 ATR（Wilder EMA）
+    - 完全ベクトル化
+    - 安定性のため prev_close を使用
+    - period が大きくても高速
+    """
+    tr1 = high - low
+    prev_close = np.concatenate(([close[0]], close[:-1]))
+    tr2 = np.abs(high - prev_close)
+    tr3 = np.abs(low - prev_close)
+    tr = np.maximum(np.maximum(tr1, tr2), tr3)
+
+    atr = np.empty_like(tr)
+    alpha = 1.0 / period
+    atr[0] = tr[0]
+
+    for i in range(1, len(tr)):
+        atr[i] = (1 - alpha) * atr[i - 1] + alpha * tr[i]
+
+    return atr
+
+
+# ------------------------------------------------------------
+# fast_rsi : 高速 RSI（Wilder EMA）
+# ------------------------------------------------------------
+def fast_rsi(close: np.ndarray, period: int = 14) -> np.ndarray:
+    """
+    高速 RSI（Wilder EMA）
+    - 完全ベクトル化
+    - deltas から up/down を抽出
+    """
+    deltas = np.diff(close, prepend=close[0])
+    ups = np.where(deltas > 0, deltas, 0.0)
+    downs = np.where(deltas < 0, -deltas, 0.0)
+
+    avg_up = np.empty_like(close)
+    avg_down = np.empty_like(close)
+
+    alpha = 1.0 / period
+    avg_up[0] = ups[0]
+    avg_down[0] = downs[0]
+
+    for i in range(1, len(close)):
+        avg_up[i] = (1 - alpha) * avg_up[i - 1] + alpha * ups[i]
+        avg_down[i] = (1 - alpha) * avg_down[i - 1] + alpha * downs[i]
+
+    rs = np.where(avg_down == 0, 0, avg_up / avg_down)
+    return 100 - (100 / (1 + rs))
+
+
+# ------------------------------------------------------------
+# fast_macd : 高速 MACD（EMA 差分）
+# ------------------------------------------------------------
+def fast_macd(close: np.ndarray, fast: int = 12, slow: int = 26) -> np.ndarray:
+    """
+    高速 MACD（EMA 差分）
+    - EMA を2本計算して差分を返す
+    """
+    def ema(series, period):
+        alpha = 2.0 / (period + 1)
+        out = np.empty_like(series)
+        out[0] = series[0]
+        for i in range(1, len(series)):
+            out[i] = alpha * series[i] + (1 - alpha) * out[i - 1]
+        return out
+
+    return ema(close, fast) - ema(close, slow)
+
+
+# ------------------------------------------------------------
+# dtw_distance_early : 価格系列専用 DTW（早期打ち切り）
+# ------------------------------------------------------------
+def dtw_distance_early(a: np.ndarray, b: np.ndarray, window: int) -> float:
+    """
+    価格系列専用 DTW（Dynamic Time Warping）
+    - window による制限で高速化
+    - early abandon（途中終了）でさらに高速化
+    - 類似度計算の安定性を重視
+    """
+    na = len(a)
+    nb = len(b)
+    if na == 0 or nb == 0:
+        return 1e18
+
+    w = max(window, abs(na - nb))
+    INF = 1e18
+
+    prev = np.full(nb + 1, INF)
+    cur = np.full(nb + 1, INF)
+    prev[0] = 0.0
+
+    for i in range(1, na + 1):
+        start_j = max(1, i - w)
+        end_j = min(nb, i + w)
+        cur.fill(INF)
+
+        ai = a[i - 1]
+
+        for j in range(start_j, end_j + 1):
+            cost = abs(ai - b[j - 1])
+            cur[j] = cost + min(prev[j], cur[j - 1], prev[j - 1])
+
+        prev, cur = cur, prev
+
+        # early abandon
+        if np.min(prev[start_j:end_j + 1]) > 1e12:
+            return float(INF)
+
+    return float(prev[nb])
+# ============================================================
+# PART 2 / 5 : 特徴量（固定次元 Price Shape + Market/Vol）
+# ============================================================
+
+import numpy as np
+import pandas as pd
+
+# ------------------------------------------------------------
+# build_price_shape_features : 固定 24 次元の価格形状特徴量
+# ------------------------------------------------------------
+def build_price_shape_features(df: pd.DataFrame, N: int, atr_series: np.ndarray) -> np.ndarray:
+    """
+    N 本のローソク足から「固定 24 次元」の特徴量を生成する。
+    - N に依存しないため、類似度空間が安定する
+    - 実体・ヒゲ・レンジ・方向性・ボラティリティ・傾きなどを統合
+    - 価格形状の本質を抽出するための最適化済みセット
+    """
+
+    o = df['Open'].values
+    h = df['High'].values
+    l = df['Low'].values
+    c = df['Close'].values
+    v = df['Volume'].values if 'Volume' in df.columns else np.zeros_like(c)
+
+    total = len(df)
+    windows = total - N + 1
+    if windows <= 0:
+        raise ValueError("Not enough bars for the requested N in build_price_shape_features.")
+
+    feat_len = 24
+    mat = np.zeros((windows, feat_len), dtype=float)
+
+    bodies = c - o
+    upper_wicks = h - np.maximum(o, c)
+    lower_wicks = np.minimum(o, c) - l
+    ranges = h - l
+    ranges[ranges == 0] = 1e-8
+
+    body_abs = np.abs(bodies)
+    wick_total = upper_wicks + lower_wicks
+
+    for i in range(windows):
+        start = i
+        stop = i + N
+
+        bs = bodies[start:stop]
+        ba = body_abs[start:stop]
+        uw = upper_wicks[start:stop]
+        lw = lower_wicks[start:stop]
+        wt = wick_total[start:stop]
+        rg = ranges[start:stop]
+        cl = c[start:stop]
+        op = o[start:stop]
+        vol = v[start:stop]
+
+        atr_val = max(1e-8, atr_series[start:stop].mean())
+
+        # -------------------------
+        # 1. 実体の統計量
+        # -------------------------
+        body_mean = bs.mean()
+        body_std = bs.std()
+        body_abs_mean = ba.mean()
+        body_abs_std = ba.std()
+
+        # -------------------------
+        # 2. ヒゲの統計量
+        # -------------------------
+        uw_mean = uw.mean()
+        lw_mean = lw.mean()
+        wick_total_mean = wt.mean()
+        wick_ratio_mean = (wt / rg).mean()
+
+        # -------------------------
+        # 3. レンジの統計量
+        # -------------------------
+        range_mean = rg.mean()
+        range_std = rg.std()
+        range_atr_ratio = range_mean / atr_val
+
+        # -------------------------
+        # 4. 陽線率・陰線率・連続本数
+        # -------------------------
+        up_mask = bs > 0
+        down_mask = bs < 0
+        up_ratio = up_mask.mean()
+        down_ratio = down_mask.mean()
+
+        max_up_run = 0
+        max_down_run = 0
+        cur_up = 0
+        cur_down = 0
+        for b in bs:
+            if b > 0:
+                cur_up += 1
+                cur_down = 0
+            elif b < 0:
+                cur_down += 1
+                cur_up = 0
+            else:
+                cur_up = 0
+                cur_down = 0
+            max_up_run = max(max_up_run, cur_up)
+            max_down_run = max(max_down_run, cur_down)
+
+        # -------------------------
+        # 5. ボラティリティ（Volume）
+        # -------------------------
+        vol_mean = vol.mean()
+        vol_std = vol.std()
+        vol_atr_ratio = vol_mean / (vol_mean + 1e-8)
+
+        # -------------------------
+        # 6. 価格の傾き（線形回帰）
+        # -------------------------
+        x = np.arange(len(cl))
+        if len(cl) >= 2:
+            A = np.vstack([x, np.ones_like(x)]).T
+            m, _ = np.linalg.lstsq(A, cl, rcond=None)[0]
+        else:
+            m = 0.0
+        slope_norm = m / atr_val
+
+        # -------------------------
+        # 7. 価格位置（レンジ内の相対位置）
+        # -------------------------
+        high_win = cl.max()
+        low_win = cl.min()
+        last_close = cl[-1]
+        pos_in_range = (last_close - low_win) / max(high_win - low_win, 1e-8)
+
+        # -------------------------
+        # 8. 実体 vs レンジ比
+        # -------------------------
+        body_range_ratio_mean = (ba / rg).mean()
+
+        # -------------------------
+        # 9. 最終バーの特徴
+        # -------------------------
+        last_body_norm = bs[-1] / atr_val
+        last_wick_norm = wt[-1] / atr_val
+        total_move_norm = (cl[-1] - op[0]) / atr_val
+
+        # -------------------------
+        # 24次元ベクトルに詰める
+        # -------------------------
+        row = [
+            body_mean, body_std, body_abs_mean, body_abs_std,
+            uw_mean, lw_mean, wick_total_mean, wick_ratio_mean,
+            range_mean, range_std, range_atr_ratio,
+            up_ratio, down_ratio, max_up_run, max_down_run,
+            vol_mean, vol_std, vol_atr_ratio,
+            slope_norm, pos_in_range, body_range_ratio_mean,
+            last_body_norm, last_wick_norm, total_move_norm
+        ]
+
+        mat[i, :] = row
+
+    return mat
+
+
+# ------------------------------------------------------------
+# build_market_vol_features : 固定 15 次元の市場構造特徴量
+# ------------------------------------------------------------
+def build_market_vol_features(df: pd.DataFrame, N: int, atr_series: np.ndarray) -> np.ndarray:
+    """
+    市場構造（トレンド・レンジ・ボラティリティ）を表す固定 15 次元特徴量。
+    - トレンド強度
+    - レンジ幅
+    - ブレイクアウト距離
+    - モメンタム（ROC / RSI / CCI / MACD）
+    - 出来高
+    """
+
+    h = df['High'].values
+    l = df['Low'].values
+    c = df['Close'].values
+    v = df['Volume'].values if 'Volume' in df.columns else np.zeros_like(c)
+
+    total = len(df)
+    windows = total - N + 1
+    feat_len = 15
+    mat = np.zeros((windows, feat_len), dtype=float)
+
+    for i in range(windows):
+        start = i
+        stop = i + N
+
+        highs = h[start:stop]
+        lows = l[start:stop]
+        closes = c[start:stop]
+        vols = v[start:stop] if len(v) > 0 else np.zeros_like(closes)
+
+        # -------------------------
+        # 1. トレンド傾き（線形回帰）
+        # -------------------------
+        x = np.arange(len(closes))
+        if len(closes) >= 2:
+            A = np.vstack([x, np.ones_like(x)]).T
+            m, _ = np.linalg.lstsq(A, closes, rcond=None)[0]
+        else:
+            m = 0.0
+
+        # 前半・後半の傾き変化
+        half = max(1, len(closes) // 2)
+        slope1 = 0.0
+        slope2 = 0.0
+        if half >= 2:
+            x1 = np.arange(half)
+            m1, _ = np.linalg.lstsq(np.vstack([x1, np.ones_like(x1)]).T, closes[:half], rcond=None)[0]
+            slope1 = m1
+        if len(closes) - half >= 2:
+            x2 = np.arange(len(closes) - half)
+            m2, _ = np.linalg.lstsq(np.vstack([x2, np.ones_like(x2)]).T, closes[half:], rcond=None)[0]
+            slope2 = m2
+
+        slope_change = 0.0 if abs(slope1) < 1e-12 else (slope2 - slope1) / (abs(slope1) + 1e-8)
+
+        # -------------------------
+        # 2. ATR 正規化トレンド強度
+        # -------------------------
+        atr_val = max(1e-8, atr_series[stop - 1])
+        trend_strength = m / atr_val
+
+        # -------------------------
+        # 3. レンジ構造
+        # -------------------------
+        highs_roll_max = np.max(highs)
+        lows_roll_min = np.min(lows)
+
+        hh = int(highs[-1] > np.max(highs[:-1])) if len(highs) > 1 else 0
+        ll = int(lows[-1] < np.min(lows[:-1])) if len(lows) > 1 else 0
+
+        range_width = (highs_roll_max - lows_roll_min) / atr_val
+        range_position = (closes[-1] - lows_roll_min) / max((highs_roll_max - lows_roll_min), 1e-8)
+
+        # -------------------------
+        # 4. ブレイクアウト距離
+        # -------------------------
+        breakout_distance = 0.0
+        if closes[-1] > highs_roll_max:
+            breakout_distance = (closes[-1] - highs_roll_max) / atr_val
+        elif closes[-1] < lows_roll_min:
+            breakout_distance = (lows_roll_min - closes[-1]) / atr_val
+
+        breakout_volume_ratio = vols[-1] / (np.mean(vols) + 1e-8) if len(vols) > 0 else 0.0
+
+        # -------------------------
+        # 5. モメンタム系
+        # -------------------------
+        atr_norm = atr_val / max(abs(closes[-1]), 1e-8)
+
+        roc_val = 0.0
+        if len(closes) > 1:
+            roc_val = (closes[-1] - closes[0]) / max(abs(closes[0]), 1e-8)
+
+        rsi_val = fast_rsi(closes, period=min(14, max(2, len(closes))))[-1]
+
+        tp = (highs + lows + closes) / 3.0
+        ma = np.mean(tp)
+        mean_dev = np.mean(np.abs(tp - ma)) if len(tp) > 0 else 0.0
+        cci_val = (tp[-1] - ma) / (0.015 * mean_dev) if mean_dev > 1e-8 else 0.0
+
+        macd_val = fast_macd(closes)[-1] if len(closes) >= 2 else 0.0
+
+        vol_mean = np.mean(vols) if len(vols) > 0 else 0.0
+
+        # -------------------------
+        # 15次元ベクトルに詰める
+        # -------------------------
+        row = [
+            m, slope_change, trend_strength,
+            hh, ll,
+            range_width, range_position,
+            breakout_distance, breakout_volume_ratio,
+            atr_norm, roc_val, rsi_val, cci_val, macd_val,
+            vol_mean
+        ]
+
+        mat[i, :] = row
+
+    return mat
+# ============================================================
+# PART 3 / 5 : 類似度エンジン（Cosine + DTW + 時間減衰 + 動的 top_k）
+# ============================================================
+
+import numpy as np
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# ------------------------------------------------------------
+# compute_similarities_fast :
+#   - コサイン類似度（全パターン）
+#   - DTW（価格系列 top_k のみ）
+#   - 時間減衰（exp decay）
+#   - ATR に応じた top_k の動的調整
+# ------------------------------------------------------------
+def compute_similarities_fast(
+    current_vec: np.ndarray,
+    past_matrix: np.ndarray,
+    current_price_seq: np.ndarray,
+    past_price_seqs: np.ndarray,
+    top_k: int,
+    dtw_window: int | None = None,
+    tau: float = 300.0,
+):
+    """
+    類似度エンジン（最終形）
+    --------------------------------------------------------
+    1. コサイン類似度（全パターン）
+    2. 上位 top_k に対してのみ DTW（価格系列）
+    3. 時間減衰（exp(-age/tau)）
+    4. コサインと DTW をブレンド
+    --------------------------------------------------------
+    """
+
+    eps = 1e-12
+
+    # --------------------------------------------------------
+    # 1. コサイン類似度（全パターン）
+    # --------------------------------------------------------
+    cur_norm = np.linalg.norm(current_vec) + eps
+    past_norms = np.linalg.norm(past_matrix, axis=1) + eps
+    cos_sims = (past_matrix @ current_vec) / (past_norms * cur_norm)
+    cos_sims = np.nan_to_num(cos_sims, nan=0.0)
+
+    # 初期値はコサイン類似度
+    sims = np.copy(cos_sims)
+
+    # --------------------------------------------------------
+    # 2. DTW（top_k のみ）
+    # --------------------------------------------------------
+    if len(past_matrix) > 0:
+        k = min(top_k, len(cos_sims))
+        top_idx = np.argsort(-cos_sims)[:k]
+
+        dtw_results = np.zeros(k, dtype=float)
+        cur = current_price_seq
+        window = dtw_window if dtw_window is not None else len(cur)
+
+        # 並列 DTW
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            futures = {
+                ex.submit(dtw_distance_early, cur, past_price_seqs[i], window): idx
+                for idx, i in enumerate(top_idx)
+            }
+            for fut in as_completed(futures):
+                idx = futures[fut]
+                try:
+                    dtw_results[idx] = fut.result()
+                except Exception:
+                    dtw_results[idx] = 1e18
+
+        # DTW → 類似度に変換
+        sim_dtw = 1.0 / (1.0 + dtw_results)
+
+        # --------------------------------------------------------
+        # 3. 時間減衰（exp decay）
+        # --------------------------------------------------------
+        # age: 0 が最新、増えるほど古い
+        ages = np.arange(len(past_matrix))[::-1]
+        time_weights_full = np.exp(-ages / tau)
+
+        # top_k の age を抽出
+        top_ages = ages[top_idx]
+        top_time_weights = np.exp(-top_ages / tau)
+
+        # --------------------------------------------------------
+        # 4. コサイン + DTW + 時間減衰 の統合
+        # --------------------------------------------------------
+        for j, i in enumerate(top_idx):
+            sims[i] = (
+                0.7 * cos_sims[i] +
+                0.3 * sim_dtw[j]
+            ) * top_time_weights[j]
+
+    return sims, cos_sims
+# ============================================================
+# PART 4 / 5 : 状態判定（Z-score 動的判定）
+# ============================================================
+
+import numpy as np
+import pandas as pd
+import json
+# ==============================
+# 状態判定ロジック（修正版）
+# ==============================
+def determine_state_dynamic(cur_window: pd.DataFrame, atr_series: np.ndarray, N: int) -> str:
+    closes = cur_window["Close"].values
+    highs  = cur_window["High"].values
+    lows   = cur_window["Low"].values
+    opens  = cur_window["Open"].values
+
+    # ATR
+    atr_val  = max(1e-8, atr_series[-1])
+    atr_prev = atr_series[-2] if len(atr_series) >= 2 else atr_val
+
+    # slope_norm（傾き / ATR）
+    x = np.arange(N)
+    if N >= 2:
+        A = np.vstack([x, np.ones_like(x)]).T
+        m, _ = np.linalg.lstsq(A, closes, rcond=None)[0]
+    else:
+        m = 0.0
+    slope_norm = m / atr_val
+
+    # slope_z（価格変化ベース）
+    deltas = np.diff(closes)
+    if len(deltas) < 10:
+        slope_z = 0.0
+    else:
+        slope_z = (slope_norm - np.mean(deltas)) / (np.std(deltas) + 1e-8)
+
+    # ATR Z-score
+    lookback = min(200, len(atr_series))
+    atr_hist = atr_series[-lookback:]
+    atr_z = (atr_val - atr_hist.mean()) / (atr_hist.std() + 1e-8)
+
+    # HH / LL
+    hh = highs[-1] > np.max(highs[:-1]) if len(highs) > 1 else False
+    ll = lows[-1]  < np.min(lows[:-1]) if len(lows) > 1 else False
+
+    # ブレイク距離
+    range_high = np.max(highs)
+    range_low  = np.min(lows)
+    close_last = closes[-1]
+
+    breakout_dist = 0.0
+    if close_last > range_high:
+        breakout_dist = (close_last - range_high) / atr_val
+    elif close_last < range_low:
+        breakout_dist = (range_low - close_last) / atr_val
+
+    # ブレイク Z-score
+    range_hist = []
+    if lookback > N + 10:
+        for i in range(N, lookback):
+            h = highs[max(0, i - N):i]
+            lo = lows[max(0, i - N):i]
+            if len(h) > 0:
+                range_hist.append((h.max() - lo.min()) / max(1e-8, atr_hist[i - 1]))
+
+    if len(range_hist) < 10:
+        breakout_z = 0.0
+    else:
+        range_hist = np.array(range_hist)
+        breakout_z = (breakout_dist - range_hist.mean()) / (range_hist.std() + 1e-8)
+
+    # price_signal（方向の連続性）
+    bodies = closes - opens
+    signs = np.sign(bodies[-5:]) if len(bodies) >= 5 else np.sign(bodies)
+    price_signal = int(np.sign(np.sum(signs)))  # -1 / 0 / +1
+
+    # 1. 強いトレンド
+    if slope_z > 0.7 and (hh or (len(lows) >= 2 and lows[-1] >= lows[-2])):
+        return "trend_up"
+
+    if slope_z < -0.7 and (ll or (len(highs) >= 2 and highs[-1] <= highs[-2])):
+        return "trend_down"
+
+    # 2. ブレイクアウト
+    if breakout_z > 1.2 and abs(price_signal) == 1:
+        return "range_breakout"
+
+    # 3. レンジ
+    if abs(slope_z) < 0.3 and abs(atr_z) < 0.5:
+        mid = (range_high + range_low) / 2
+        return "range_up" if close_last > mid else "range_down"
+
+    # 4. トレンド終了（強化版）
+    trend_up_end = (
+        (not hh) +
+        (slope_z < 0.2) +
+        (atr_z < -0.5) +
+        (price_signal < 0)
+    ) >= 2
+
+    trend_down_end = (
+        (not ll) +
+        (slope_z > -0.2) +
+        (atr_z < -0.5) +
+        (price_signal > 0)
+    ) >= 2
+
+    if trend_up_end:
+        return "trend_up_end"
+
+    if trend_down_end:
+        return "trend_down_end"
+
+    return "neutral"
+
+
+# ==============================
+# メイン予測ロジック（統合版）
+# ==============================
+def predict_fx(df: pd.DataFrame, N: int) -> dict:
+    """
+    最終予測ロジック（統合版）
+    --------------------------------------------------------
+    入力:
+        df : OHLCV DataFrame
+        N  : ウィンドウ長
+
+    出力:
+        {
+            "last_close": float,
+            "high_est": float,
+            "low_est": float,
+            "direction": int,
+            "confidence": float,
+            "range_position": float,
+            "state": str
+        }
+    --------------------------------------------------------
+    """
+
+    # 必須列チェック
+    required_cols = ['Open', 'High', 'Low', 'Close']
+    for c in required_cols:
+        if c not in df.columns:
+            raise ValueError(f"DataFrame must contain column: {c}")
+
+    if 'Volume' not in df.columns:
+        df['Volume'] = 0.0
+
+    total = len(df)
+    if total < N + 3:
+        raise ValueError("Not enough bars for the requested N and next3 calculation.")
+
+    # ATR 計算
+    ATR_PERIOD = max(14, N)
+    highs = df['High'].values
+    lows = df['Low'].values
+    closes = df['Close'].values
+
+    atr_series = fast_atr(highs, lows, closes, ATR_PERIOD)
+
+    # 特徴量
+    price_shape_mat = build_price_shape_features(df, N, atr_series)
+    market_vol_mat = build_market_vol_features(df, N, atr_series)
+    pattern_mat = np.hstack([price_shape_mat, market_vol_mat])
+
+    windows = total - N + 1
+    current_vec = pattern_mat[-1]
+
+    # 類似パターン範囲
+    valid_count_full = windows - 1
+    if valid_count_full <= 0:
+        raise ValueError("Not enough historical windows for similarity search.")
+
+    start_idx = max(0, valid_count_full - MAX_HISTORY_WINDOWS)
+    end_idx = valid_count_full
+    valid_count = end_idx - start_idx
+
+    past_mat = pattern_mat[start_idx:end_idx]
+
+    # 価格系列（DTW 用）
+    closes_seq = closes
+    price_seqs = []
+    for i in range(windows):
+        s = i
+        e = i + N
+        price_seqs.append(closes_seq[s:e])
+    price_seqs = np.array(price_seqs, dtype=float)
+
+    current_price_seq = price_seqs[-1]
+    past_price_seqs = price_seqs[start_idx:end_idx]
+
+    # next3 ラベル
+    direction_labels = np.zeros(valid_count, dtype=float)
+    strength_labels = np.zeros(valid_count, dtype=float)
+    volatility_labels = np.zeros(valid_count, dtype=float)
+    next3_high_norm = np.zeros(valid_count, dtype=float)
+    next3_low_norm  = np.zeros(valid_count, dtype=float)
+
+    for idx, i in enumerate(range(start_idx, end_idx)):
+        cur_close = closes[i + N - 1]
+        next3 = closes[i + N:i + N + 3]
+        if len(next3) == 0:
+            continue
+
+        next_high = np.max(next3)
+        next_low  = np.min(next3)
+
+        atr_ref = max(1e-8, atr_series[i + N - 1])
+
+        move_up_norm   = (next_high - cur_close) / atr_ref
+        move_down_norm = (cur_close - next_low) / atr_ref
+
+        if move_up_norm > move_down_norm:
+            direction_labels[idx] = 1
+        elif move_down_norm > move_up_norm:
+            direction_labels[idx] = -1
+        else:
+            direction_labels[idx] = 0
+
+        strength_labels[idx] = max(move_up_norm, move_down_norm)
+        volatility_labels[idx] = (next_high - next_low) / atr_ref
+
+        next3_high_norm[idx] = move_up_norm
+        next3_low_norm[idx]  = -move_down_norm
+
+    # 類似度（コサイン + DTW + 時間減衰）
+    atr_last = atr_series[-1]
+    atr_hist = atr_series[-200:] if len(atr_series) > 200 else atr_series
+    atr_z = (atr_last - atr_hist.mean()) / (atr_hist.std() + 1e-8)
+
+    if atr_z > 1.0:
+        dynamic_top_k = 150
+    elif atr_z < -0.5:
+        dynamic_top_k = 60
+    else:
+        dynamic_top_k = 100
+
+    sims, cos_sims = compute_similarities_fast(
+        current_vec,
+        past_mat,
+        current_price_seq,
+        past_price_seqs,
+        top_k=dynamic_top_k,
+        dtw_window=max(5, N // 2),
+    )
+
+    # 類似パターン集約
+    SIM_THRESHOLD = 0.4
+    similar_mask = sims > SIM_THRESHOLD
+    similar_count = int(np.sum(similar_mask))
+    total_patterns = len(sims)
+
+    if similar_count > 0:
+        avg_dir = np.mean(direction_labels[similar_mask])
+        pattern_signal = int(np.sign(avg_dir)) if avg_dir != 0 else 0
+
+        avg_strength   = float(np.mean(strength_labels[similar_mask]))
+        avg_volatility = float(np.mean(volatility_labels[similar_mask]))
+        avg_high_norm  = float(np.mean(next3_high_norm[similar_mask]))
+        avg_low_norm   = float(np.mean(next3_low_norm[similar_mask]))
+
+        pattern_confidence = float(np.mean(sims[similar_mask]) * (similar_count / total_patterns))
+
+    else:
+        top_k2 = min(10, total_patterns)
+        top_idx = np.argsort(-sims)[:top_k2]
+
+        avg_dir = np.mean(direction_labels[top_idx])
+        pattern_signal = int(np.sign(avg_dir)) if avg_dir != 0 else 0
+
+        avg_strength   = float(np.mean(strength_labels[top_idx]))
+        avg_volatility = float(np.mean(volatility_labels[top_idx]))
+        avg_high_norm  = float(np.mean(next3_high_norm[top_idx]))
+        avg_low_norm   = float(np.mean(next3_low_norm[top_idx]))
+
+        pattern_confidence = float(np.mean(sims[top_idx]) * (top_k2 / total_patterns))
+
+    avg_strength   = float(np.clip(avg_strength,   -3.0, 3.0))
+    avg_volatility = float(np.clip(avg_volatility,  0.0, 5.0))
+    avg_high_norm  = float(np.clip(avg_high_norm,  -3.0, 3.0))
+    avg_low_norm   = float(np.clip(avg_low_norm,   -3.0, 3.0))
+
+    # 状態判定
+    cur_start = total - N
+    cur_window = df.iloc[cur_start:cur_start + N].reset_index(drop=True)
+    state = determine_state_dynamic(cur_window, atr_series, N)
+
+    # range_position 再計算
+    highs_win = cur_window["High"].values
+    lows_win  = cur_window["Low"].values
+    closes_win = cur_window["Close"].values
+
+    range_high = np.max(highs_win)
+    range_low  = np.min(lows_win)
+    last_close_win = closes_win[-1]
+
+    range_position = (last_close_win - range_low) / max((range_high - range_low), 1e-8)
+
+    # price_signal（方向の連続性）
+    bodies = cur_window['Close'].values - cur_window['Open'].values
+    signs = np.sign(bodies[-5:]) if len(bodies) >= 5 else np.sign(bodies)
+    price_signal = int(np.sign(np.sum(signs)))
+
+    # direction（state と矛盾しない最終方向）
+    if state == "trend_up":
+        direction = 1
+
+    elif state == "trend_down":
+        direction = -1
+
+    elif state == "range_up":
+        direction = 1 if range_position > 0.5 else -1
+
+    elif state == "range_down":
+        direction = -1 if range_position < 0.5 else 1
+
+    elif state == "range_breakout":
+        direction = 1 if price_signal > 0 else -1
+
+    elif state == "trend_up_end":
+        combined_dir = price_signal + pattern_signal
+        direction = -1 if combined_dir <= 0 else 1
+
+    elif state == "trend_down_end":
+        combined_dir = price_signal + pattern_signal
+        direction = 1 if combined_dir >= 0 else -1
+
+    elif state == "neutral":
+        combined_dir = price_signal + pattern_signal
+        direction = 1 if combined_dir > 0 else -1
+
+    else:
+        direction = int(np.sign(price_signal + pattern_signal)) or 1
+
+    # signal_consistency
+    signals = np.array([price_signal, pattern_signal], dtype=float)
+    non_zero = signals[signals != 0]
+    signal_consistency = float(abs(np.mean(np.sign(non_zero)))) if len(non_zero) > 0 else 0.0
+
+    # confidence（state 別調整）
+    recent_vol = cur_window['Volume'].values[-1]
+    vol_mean = np.mean(cur_window['Volume'].values) + 1e-8
+    vol_factor = min(1.0, recent_vol / vol_mean) if vol_mean > 0 else 0.0
+
+    raw_conf = (
+        0.5 * signal_consistency +
+        0.3 * pattern_confidence +
+        0.2 * vol_factor
+    )
+
+    conf = 1 / (1 + np.exp(-(2.5 * raw_conf - 1.2)))
+    confidence = float(np.clip(conf, 0.0, 1.0))
+
+    if state == "trend_end":
+        confidence = min(confidence, 0.6)
+    elif state in ["range_up", "range_down"]:
+        confidence = min(confidence, 0.7)
+    elif state == "range_breakout":
+        confidence = min(confidence, 0.85)
+    # trend_up / trend_down はそのまま
+
+    # 予測レンジ
+    last_close = float(closes[-1])
+    atr_last = max(1e-8, atr_series[-1])
+
+    est_high = last_close + avg_high_norm * atr_last
+    est_low  = last_close + avg_low_norm  * atr_last
+
+    conf_adj = 0.3 + 0.7 * (1 - confidence)
+
+    high_est = est_high + conf_adj * atr_last
+    low_est  = est_low  - conf_adj * atr_last
+
+    if pattern_signal == 0:
+        high_est = last_close + 0.3 * atr_last
+        low_est  = last_close - 0.3 * atr_last
+
+    result = {
+        "last_close": float(last_close),
+        "high_est": float(high_est),
+        "low_est": float(low_est),
+        "direction": int(direction),
+        "confidence": float(confidence),
+        "range_position": float(range_position),
+        "state": state,
+    }
+
+    try:
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+    return result
+
+# ------------------------------------------------------------
+# CSV 読み込み + 実行
+# ------------------------------------------------------------
+def load_and_predict(input_csv: str = input_path, N: int = 20):
+    df = pd.read_csv(input_csv)
+    for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+        if col in df.columns:
+            df[col] = (
+                pd.to_numeric(df[col], errors='coerce')
+                .fillna(method='ffill')
+                .fillna(0.0)
+            )
+    return predict_fx(df, N)
+
+
+# ------------------------------------------------------------
+# main
+# ------------------------------------------------------------
+if __name__ == "__main__":
+    try:
+        pred = load_and_predict(input_path, N=20)
+        print(json.dumps(pred, ensure_ascii=False, indent=2))
+    except Exception as e:
+        print(json.dumps({"error": str(e)}, ensure_ascii=False, indent=2))
