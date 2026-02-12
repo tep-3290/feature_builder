@@ -1,30 +1,30 @@
 # ============================================================
-# PART 1 / 5 : ‚‘¬ƒCƒ“ƒWƒP[ƒ^iATR / RSI / MACD / DTWj
+# PART 1 / 5 : é«˜é€Ÿã‚¤ãƒ³ã‚¸ã‚±ãƒ¼ã‚¿ï¼ˆATR / RSI / MACD / DTWï¼‰
 # ============================================================
 
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # =========================================
-# “üo—ÍƒpƒXiMQL4 ˜AŒgj
+# å…¥å‡ºåŠ›ãƒ‘ã‚¹ï¼ˆMQL4 é€£æºï¼‰
 # =========================================
 input_path = r"C:\Users\arei_\AppData\Roaming\MetaQuotes\Terminal\34B08C83A5AAE27A4079DE708E60511E\MQL4\Files\USDJPY_py.csv"
 output_path = r"C:\Users\arei_\AppData\Roaming\MetaQuotes\Terminal\34B08C83A5AAE27A4079DE708E60511E\MQL4\Files\nextbar.txt"
 
-# —Ş—ƒpƒ^[ƒ“‚ÌÅ‘å”
+# é¡ä¼¼ãƒ‘ã‚¿ãƒ¼ãƒ³ã®æœ€å¤§æ•°
 MAX_HISTORY_WINDOWS = 2000
 
-# —Ş—“x‚ÌŠÔŒ¸ŠŒW”
+# é¡ä¼¼åº¦ã®æ™‚é–“æ¸›è¡°ä¿‚æ•°
 TIME_DECAY_TAU = 300.0
 # ------------------------------------------------------------
-# fast_atr : ‚‘¬ ATRiWilder EMAj
+# fast_atr : é«˜é€Ÿ ATRï¼ˆWilder EMAï¼‰
 # ------------------------------------------------------------
 def fast_atr(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int) -> np.ndarray:
     """
-    ‚‘¬ ATRiWilder EMAj
-    - Š®‘SƒxƒNƒgƒ‹‰»
-    - ˆÀ’è«‚Ì‚½‚ß prev_close ‚ğg—p
-    - period ‚ª‘å‚«‚­‚Ä‚à‚‘¬
+    é«˜é€Ÿ ATRï¼ˆWilder EMAï¼‰
+    - å®Œå…¨ãƒ™ã‚¯ãƒˆãƒ«åŒ–
+    - å®‰å®šæ€§ã®ãŸã‚ prev_close ã‚’ä½¿ç”¨
+    - period ãŒå¤§ããã¦ã‚‚é«˜é€Ÿ
     """
     tr1 = high - low
     prev_close = np.concatenate(([close[0]], close[:-1]))
@@ -43,13 +43,13 @@ def fast_atr(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int) 
 
 
 # ------------------------------------------------------------
-# fast_rsi : ‚‘¬ RSIiWilder EMAj
+# fast_rsi : é«˜é€Ÿ RSIï¼ˆWilder EMAï¼‰
 # ------------------------------------------------------------
 def fast_rsi(close: np.ndarray, period: int = 14) -> np.ndarray:
     """
-    ‚‘¬ RSIiWilder EMAj
-    - Š®‘SƒxƒNƒgƒ‹‰»
-    - deltas ‚©‚ç up/down ‚ğ’Šo
+    é«˜é€Ÿ RSIï¼ˆWilder EMAï¼‰
+    - å®Œå…¨ãƒ™ã‚¯ãƒˆãƒ«åŒ–
+    - deltas ã‹ã‚‰ up/down ã‚’æŠ½å‡º
     """
     deltas = np.diff(close, prepend=close[0])
     ups = np.where(deltas > 0, deltas, 0.0)
@@ -71,12 +71,12 @@ def fast_rsi(close: np.ndarray, period: int = 14) -> np.ndarray:
 
 
 # ------------------------------------------------------------
-# fast_macd : ‚‘¬ MACDiEMA ·•ªj
+# fast_macd : é«˜é€Ÿ MACDï¼ˆEMA å·®åˆ†ï¼‰
 # ------------------------------------------------------------
 def fast_macd(close: np.ndarray, fast: int = 12, slow: int = 26) -> np.ndarray:
     """
-    ‚‘¬ MACDiEMA ·•ªj
-    - EMA ‚ğ2–{ŒvZ‚µ‚Ä·•ª‚ğ•Ô‚·
+    é«˜é€Ÿ MACDï¼ˆEMA å·®åˆ†ï¼‰
+    - EMA ã‚’2æœ¬è¨ˆç®—ã—ã¦å·®åˆ†ã‚’è¿”ã™
     """
     def ema(series, period):
         alpha = 2.0 / (period + 1)
@@ -90,14 +90,14 @@ def fast_macd(close: np.ndarray, fast: int = 12, slow: int = 26) -> np.ndarray:
 
 
 # ------------------------------------------------------------
-# dtw_distance_early : ‰¿ŠiŒn—ñê—p DTWi‘Šú‘Å‚¿Ø‚èj
+# dtw_distance_early : ä¾¡æ ¼ç³»åˆ—å°‚ç”¨ DTWï¼ˆæ—©æœŸæ‰“ã¡åˆ‡ã‚Šï¼‰
 # ------------------------------------------------------------
 def dtw_distance_early(a: np.ndarray, b: np.ndarray, window: int) -> float:
     """
-    ‰¿ŠiŒn—ñê—p DTWiDynamic Time Warpingj
-    - window ‚É‚æ‚é§ŒÀ‚Å‚‘¬‰»
-    - early abandoni“r’†I—¹j‚Å‚³‚ç‚É‚‘¬‰»
-    - —Ş—“xŒvZ‚ÌˆÀ’è«‚ğd‹
+    ä¾¡æ ¼ç³»åˆ—å°‚ç”¨ DTWï¼ˆDynamic Time Warpingï¼‰
+    - window ã«ã‚ˆã‚‹åˆ¶é™ã§é«˜é€ŸåŒ–
+    - early abandonï¼ˆé€”ä¸­çµ‚äº†ï¼‰ã§ã•ã‚‰ã«é«˜é€ŸåŒ–
+    - é¡ä¼¼åº¦è¨ˆç®—ã®å®‰å®šæ€§ã‚’é‡è¦–
     """
     na = len(a)
     nb = len(b)
@@ -130,21 +130,21 @@ def dtw_distance_early(a: np.ndarray, b: np.ndarray, window: int) -> float:
 
     return float(prev[nb])
 # ============================================================
-# PART 2 / 5 : “Á’¥—ÊiŒÅ’èŸŒ³ Price Shape + Market/Volj
+# PART 2 / 5 : ç‰¹å¾´é‡ï¼ˆå›ºå®šæ¬¡å…ƒ Price Shape + Market/Volï¼‰
 # ============================================================
 
 import numpy as np
 import pandas as pd
 
 # ------------------------------------------------------------
-# build_price_shape_features : ŒÅ’è 24 ŸŒ³‚Ì‰¿ŠiŒ`ó“Á’¥—Ê
+# build_price_shape_features : å›ºå®š 24 æ¬¡å…ƒã®ä¾¡æ ¼å½¢çŠ¶ç‰¹å¾´é‡
 # ------------------------------------------------------------
 def build_price_shape_features(df: pd.DataFrame, N: int, atr_series: np.ndarray) -> np.ndarray:
     """
-    N –{‚Ìƒ[ƒ\ƒN‘«‚©‚çuŒÅ’è 24 ŸŒ³v‚Ì“Á’¥—Ê‚ğ¶¬‚·‚éB
-    - N ‚ÉˆË‘¶‚µ‚È‚¢‚½‚ßA—Ş—“x‹óŠÔ‚ªˆÀ’è‚·‚é
-    - À‘ÌEƒqƒQEƒŒƒ“ƒWE•ûŒü«Eƒ{ƒ‰ƒeƒBƒŠƒeƒBEŒX‚«‚È‚Ç‚ğ“‡
-    - ‰¿ŠiŒ`ó‚Ì–{¿‚ğ’Šo‚·‚é‚½‚ß‚ÌÅ“K‰»Ï‚İƒZƒbƒg
+    N æœ¬ã®ãƒ­ãƒ¼ã‚½ã‚¯è¶³ã‹ã‚‰ã€Œå›ºå®š 24 æ¬¡å…ƒã€ã®ç‰¹å¾´é‡ã‚’ç”Ÿæˆã™ã‚‹ã€‚
+    - N ã«ä¾å­˜ã—ãªã„ãŸã‚ã€é¡ä¼¼åº¦ç©ºé–“ãŒå®‰å®šã™ã‚‹
+    - å®Ÿä½“ãƒ»ãƒ’ã‚²ãƒ»ãƒ¬ãƒ³ã‚¸ãƒ»æ–¹å‘æ€§ãƒ»ãƒœãƒ©ãƒ†ã‚£ãƒªãƒ†ã‚£ãƒ»å‚¾ããªã©ã‚’çµ±åˆ
+    - ä¾¡æ ¼å½¢çŠ¶ã®æœ¬è³ªã‚’æŠ½å‡ºã™ã‚‹ãŸã‚ã®æœ€é©åŒ–æ¸ˆã¿ã‚»ãƒƒãƒˆ
     """
 
     o = df['Open'].values
@@ -187,7 +187,7 @@ def build_price_shape_features(df: pd.DataFrame, N: int, atr_series: np.ndarray)
         atr_val = max(1e-8, atr_series[start:stop].mean())
 
         # -------------------------
-        # 1. À‘Ì‚Ì“Œv—Ê
+        # 1. å®Ÿä½“ã®çµ±è¨ˆé‡
         # -------------------------
         body_mean = bs.mean()
         body_std = bs.std()
@@ -195,7 +195,7 @@ def build_price_shape_features(df: pd.DataFrame, N: int, atr_series: np.ndarray)
         body_abs_std = ba.std()
 
         # -------------------------
-        # 2. ƒqƒQ‚Ì“Œv—Ê
+        # 2. ãƒ’ã‚²ã®çµ±è¨ˆé‡
         # -------------------------
         uw_mean = uw.mean()
         lw_mean = lw.mean()
@@ -203,14 +203,14 @@ def build_price_shape_features(df: pd.DataFrame, N: int, atr_series: np.ndarray)
         wick_ratio_mean = (wt / rg).mean()
 
         # -------------------------
-        # 3. ƒŒƒ“ƒW‚Ì“Œv—Ê
+        # 3. ãƒ¬ãƒ³ã‚¸ã®çµ±è¨ˆé‡
         # -------------------------
         range_mean = rg.mean()
         range_std = rg.std()
         range_atr_ratio = range_mean / atr_val
 
         # -------------------------
-        # 4. —zü—¦E‰Aü—¦E˜A‘±–{”
+        # 4. é™½ç·šç‡ãƒ»é™°ç·šç‡ãƒ»é€£ç¶šæœ¬æ•°
         # -------------------------
         up_mask = bs > 0
         down_mask = bs < 0
@@ -235,14 +235,14 @@ def build_price_shape_features(df: pd.DataFrame, N: int, atr_series: np.ndarray)
             max_down_run = max(max_down_run, cur_down)
 
         # -------------------------
-        # 5. ƒ{ƒ‰ƒeƒBƒŠƒeƒBiVolumej
+        # 5. ãƒœãƒ©ãƒ†ã‚£ãƒªãƒ†ã‚£ï¼ˆVolumeï¼‰
         # -------------------------
         vol_mean = vol.mean()
         vol_std = vol.std()
-        vol_atr_ratio = vol_mean / (vol_mean + 1e-8)
+        vol_atr_ratio = vol_mean / (np.mean(atr_series[start:stop]) + 1e-8)
 
         # -------------------------
-        # 6. ‰¿Ši‚ÌŒX‚«iüŒ`‰ñ‹Aj
+        # 6. ä¾¡æ ¼ã®å‚¾ãï¼ˆç·šå½¢å›å¸°ï¼‰
         # -------------------------
         x = np.arange(len(cl))
         if len(cl) >= 2:
@@ -253,7 +253,7 @@ def build_price_shape_features(df: pd.DataFrame, N: int, atr_series: np.ndarray)
         slope_norm = m / atr_val
 
         # -------------------------
-        # 7. ‰¿ŠiˆÊ’uiƒŒƒ“ƒW“à‚Ì‘Š‘ÎˆÊ’uj
+        # 7. ä¾¡æ ¼ä½ç½®ï¼ˆãƒ¬ãƒ³ã‚¸å†…ã®ç›¸å¯¾ä½ç½®ï¼‰
         # -------------------------
         high_win = cl.max()
         low_win = cl.min()
@@ -261,19 +261,19 @@ def build_price_shape_features(df: pd.DataFrame, N: int, atr_series: np.ndarray)
         pos_in_range = (last_close - low_win) / max(high_win - low_win, 1e-8)
 
         # -------------------------
-        # 8. À‘Ì vs ƒŒƒ“ƒW”ä
+        # 8. å®Ÿä½“ vs ãƒ¬ãƒ³ã‚¸æ¯”
         # -------------------------
         body_range_ratio_mean = (ba / rg).mean()
 
         # -------------------------
-        # 9. ÅIƒo[‚Ì“Á’¥
+        # 9. æœ€çµ‚ãƒãƒ¼ã®ç‰¹å¾´
         # -------------------------
         last_body_norm = bs[-1] / atr_val
         last_wick_norm = wt[-1] / atr_val
         total_move_norm = (cl[-1] - op[0]) / atr_val
 
         # -------------------------
-        # 24ŸŒ³ƒxƒNƒgƒ‹‚É‹l‚ß‚é
+        # 24æ¬¡å…ƒãƒ™ã‚¯ãƒˆãƒ«ã«è©°ã‚ã‚‹
         # -------------------------
         row = [
             body_mean, body_std, body_abs_mean, body_abs_std,
@@ -291,16 +291,16 @@ def build_price_shape_features(df: pd.DataFrame, N: int, atr_series: np.ndarray)
 
 
 # ------------------------------------------------------------
-# build_market_vol_features : ŒÅ’è 15 ŸŒ³‚Ìsê\‘¢“Á’¥—Ê
+# build_market_vol_features : å›ºå®š 15 æ¬¡å…ƒã®å¸‚å ´æ§‹é€ ç‰¹å¾´é‡
 # ------------------------------------------------------------
 def build_market_vol_features(df: pd.DataFrame, N: int, atr_series: np.ndarray) -> np.ndarray:
     """
-    sê\‘¢iƒgƒŒƒ“ƒhEƒŒƒ“ƒWEƒ{ƒ‰ƒeƒBƒŠƒeƒBj‚ğ•\‚·ŒÅ’è 15 ŸŒ³“Á’¥—ÊB
-    - ƒgƒŒƒ“ƒh‹­“x
-    - ƒŒƒ“ƒW•
-    - ƒuƒŒƒCƒNƒAƒEƒg‹——£
-    - ƒ‚ƒƒ“ƒ^ƒ€iROC / RSI / CCI / MACDj
-    - o—ˆ‚
+    å¸‚å ´æ§‹é€ ï¼ˆãƒˆãƒ¬ãƒ³ãƒ‰ãƒ»ãƒ¬ãƒ³ã‚¸ãƒ»ãƒœãƒ©ãƒ†ã‚£ãƒªãƒ†ã‚£ï¼‰ã‚’è¡¨ã™å›ºå®š 15 æ¬¡å…ƒç‰¹å¾´é‡ã€‚
+    - ãƒˆãƒ¬ãƒ³ãƒ‰å¼·åº¦
+    - ãƒ¬ãƒ³ã‚¸å¹…
+    - ãƒ–ãƒ¬ã‚¤ã‚¯ã‚¢ã‚¦ãƒˆè·é›¢
+    - ãƒ¢ãƒ¡ãƒ³ã‚¿ãƒ ï¼ˆROC / RSI / CCI / MACDï¼‰
+    - å‡ºæ¥é«˜
     """
 
     h = df['High'].values
@@ -323,7 +323,7 @@ def build_market_vol_features(df: pd.DataFrame, N: int, atr_series: np.ndarray) 
         vols = v[start:stop] if len(v) > 0 else np.zeros_like(closes)
 
         # -------------------------
-        # 1. ƒgƒŒƒ“ƒhŒX‚«iüŒ`‰ñ‹Aj
+        # 1. ãƒˆãƒ¬ãƒ³ãƒ‰å‚¾ãï¼ˆç·šå½¢å›å¸°ï¼‰
         # -------------------------
         x = np.arange(len(closes))
         if len(closes) >= 2:
@@ -332,7 +332,7 @@ def build_market_vol_features(df: pd.DataFrame, N: int, atr_series: np.ndarray) 
         else:
             m = 0.0
 
-        # ‘O”¼EŒã”¼‚ÌŒX‚«•Ï‰»
+        # å‰åŠãƒ»å¾ŒåŠã®å‚¾ãå¤‰åŒ–
         half = max(1, len(closes) // 2)
         slope1 = 0.0
         slope2 = 0.0
@@ -348,13 +348,13 @@ def build_market_vol_features(df: pd.DataFrame, N: int, atr_series: np.ndarray) 
         slope_change = 0.0 if abs(slope1) < 1e-12 else (slope2 - slope1) / (abs(slope1) + 1e-8)
 
         # -------------------------
-        # 2. ATR ³‹K‰»ƒgƒŒƒ“ƒh‹­“x
+        # 2. ATR æ­£è¦åŒ–ãƒˆãƒ¬ãƒ³ãƒ‰å¼·åº¦
         # -------------------------
         atr_val = max(1e-8, atr_series[stop - 1])
         trend_strength = m / atr_val
 
         # -------------------------
-        # 3. ƒŒƒ“ƒW\‘¢
+        # 3. ãƒ¬ãƒ³ã‚¸æ§‹é€ 
         # -------------------------
         highs_roll_max = np.max(highs)
         lows_roll_min = np.min(lows)
@@ -366,7 +366,7 @@ def build_market_vol_features(df: pd.DataFrame, N: int, atr_series: np.ndarray) 
         range_position = (closes[-1] - lows_roll_min) / max((highs_roll_max - lows_roll_min), 1e-8)
 
         # -------------------------
-        # 4. ƒuƒŒƒCƒNƒAƒEƒg‹——£
+        # 4. ãƒ–ãƒ¬ã‚¤ã‚¯ã‚¢ã‚¦ãƒˆè·é›¢
         # -------------------------
         breakout_distance = 0.0
         if closes[-1] > highs_roll_max:
@@ -377,7 +377,7 @@ def build_market_vol_features(df: pd.DataFrame, N: int, atr_series: np.ndarray) 
         breakout_volume_ratio = vols[-1] / (np.mean(vols) + 1e-8) if len(vols) > 0 else 0.0
 
         # -------------------------
-        # 5. ƒ‚ƒƒ“ƒ^ƒ€Œn
+        # 5. ãƒ¢ãƒ¡ãƒ³ã‚¿ãƒ ç³»
         # -------------------------
         atr_norm = atr_val / max(abs(closes[-1]), 1e-8)
 
@@ -397,7 +397,7 @@ def build_market_vol_features(df: pd.DataFrame, N: int, atr_series: np.ndarray) 
         vol_mean = np.mean(vols) if len(vols) > 0 else 0.0
 
         # -------------------------
-        # 15ŸŒ³ƒxƒNƒgƒ‹‚É‹l‚ß‚é
+        # 15æ¬¡å…ƒãƒ™ã‚¯ãƒˆãƒ«ã«è©°ã‚ã‚‹
         # -------------------------
         row = [
             m, slope_change, trend_strength,
@@ -412,7 +412,7 @@ def build_market_vol_features(df: pd.DataFrame, N: int, atr_series: np.ndarray) 
 
     return mat
 # ============================================================
-# PART 3 / 5 : —Ş—“xƒGƒ“ƒWƒ“iCosine + DTW + ŠÔŒ¸Š + “®“I top_kj
+# PART 3 / 5 : é¡ä¼¼åº¦ã‚¨ãƒ³ã‚¸ãƒ³ï¼ˆCosine + DTW + æ™‚é–“æ¸›è¡° + å‹•çš„ top_kï¼‰
 # ============================================================
 
 import numpy as np
@@ -420,10 +420,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ------------------------------------------------------------
 # compute_similarities_fast :
-#   - ƒRƒTƒCƒ“—Ş—“xi‘Sƒpƒ^[ƒ“j
-#   - DTWi‰¿ŠiŒn—ñ top_k ‚Ì‚İj
-#   - ŠÔŒ¸Šiexp decayj
-#   - ATR ‚É‰‚¶‚½ top_k ‚Ì“®“I’²®
+#   - ã‚³ã‚µã‚¤ãƒ³é¡ä¼¼åº¦ï¼ˆå…¨ãƒ‘ã‚¿ãƒ¼ãƒ³ï¼‰
+#   - DTWï¼ˆä¾¡æ ¼ç³»åˆ— top_k ã®ã¿ï¼‰
+#   - æ™‚é–“æ¸›è¡°ï¼ˆexp decayï¼‰
+#   - ATR ã«å¿œã˜ãŸ top_k ã®å‹•çš„èª¿æ•´
 # ------------------------------------------------------------
 def compute_similarities_fast(
     current_vec: np.ndarray,
@@ -434,86 +434,74 @@ def compute_similarities_fast(
     dtw_window: int | None = None,
     tau: float = 300.0,
 ):
-    """
-    —Ş—“xƒGƒ“ƒWƒ“iÅIŒ`j
-    --------------------------------------------------------
-    1. ƒRƒTƒCƒ“—Ş—“xi‘Sƒpƒ^[ƒ“j
-    2. ãˆÊ top_k ‚É‘Î‚µ‚Ä‚Ì‚İ DTWi‰¿ŠiŒn—ñj
-    3. ŠÔŒ¸Šiexp(-age/tau)j
-    4. ƒRƒTƒCƒ“‚Æ DTW ‚ğƒuƒŒƒ“ƒh
-    --------------------------------------------------------
-    """
-
     eps = 1e-12
+    if len(past_matrix) == 0:
+        return np.zeros(0, dtype=float), np.zeros(0, dtype=float)
 
-    # --------------------------------------------------------
-    # 1. ƒRƒTƒCƒ“—Ş—“xi‘Sƒpƒ^[ƒ“j
-    # --------------------------------------------------------
-    cur_norm = np.linalg.norm(current_vec) + eps
-    past_norms = np.linalg.norm(past_matrix, axis=1) + eps
-    cos_sims = (past_matrix @ current_vec) / (past_norms * cur_norm)
+    # ---- ç‰¹å¾´é‡ã‚’æ¨™æº–åŒ–ã—ã¦ã‹ã‚‰ cosine ----
+    all_mat = np.vstack([past_matrix, current_vec[None, :]])
+    mean = all_mat.mean(axis=0)
+    std = all_mat.std(axis=0) + 1e-8
+    all_norm = (all_mat - mean) / std
+
+    past_norm_mat = all_norm[:-1]
+    cur_norm_vec = all_norm[-1]
+
+    cur_norm = np.linalg.norm(cur_norm_vec) + eps
+    past_norms = np.linalg.norm(past_norm_mat, axis=1) + eps
+    cos_sims = (past_norm_mat @ cur_norm_vec) / (past_norms * cur_norm)
     cos_sims = np.nan_to_num(cos_sims, nan=0.0)
 
-    # ‰Šú’l‚ÍƒRƒTƒCƒ“—Ş—“x
     sims = np.copy(cos_sims)
 
-    # --------------------------------------------------------
-    # 2. DTWitop_k ‚Ì‚İj
-    # --------------------------------------------------------
-    if len(past_matrix) > 0:
-        k = min(top_k, len(cos_sims))
-        top_idx = np.argsort(-cos_sims)[:k]
+    # ---- DTWï¼ˆATR æ­£è¦åŒ– or å·®åˆ†ï¼‰ ----
+    k = min(top_k, len(cos_sims))
+    top_idx = np.argsort(-cos_sims)[:k]
 
-        dtw_results = np.zeros(k, dtype=float)
-        cur = current_price_seq
-        window = dtw_window if dtw_window is not None else len(cur)
+    dtw_results = np.zeros(k, dtype=float)
+    cur = current_price_seq.astype(float)
+    # å·®åˆ† + æ­£è¦åŒ–
+    cur_diff = np.diff(cur)
+    cur_diff = cur_diff / (np.std(cur_diff) + 1e-8)
 
-        # •À—ñ DTW
-        with ThreadPoolExecutor(max_workers=8) as ex:
-            futures = {
-                ex.submit(dtw_distance_early, cur, past_price_seqs[i], window): idx
-                for idx, i in enumerate(top_idx)
-            }
-            for fut in as_completed(futures):
-                idx = futures[fut]
-                try:
-                    dtw_results[idx] = fut.result()
-                except Exception:
-                    dtw_results[idx] = 1e18
+    window = dtw_window if dtw_window is not None else len(cur_diff)
 
-        # DTW ¨ —Ş—“x‚É•ÏŠ·
-        sim_dtw = 1.0 / (1.0 + dtw_results)
-
-        # --------------------------------------------------------
-        # 3. ŠÔŒ¸Šiexp decayj
-        # --------------------------------------------------------
-        # age: 0 ‚ªÅVA‘‚¦‚é‚Ù‚ÇŒÃ‚¢
-        ages = np.arange(len(past_matrix))[::-1]
-        time_weights_full = np.exp(-ages / tau)
-
-        # top_k ‚Ì age ‚ğ’Šo
-        top_ages = ages[top_idx]
-        top_time_weights = np.exp(-top_ages / tau)
-
-        # --------------------------------------------------------
-        # 4. ƒRƒTƒCƒ“ + DTW + ŠÔŒ¸Š ‚Ì“‡
-        # --------------------------------------------------------
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futures = {}
         for j, i in enumerate(top_idx):
-            sims[i] = (
-                0.7 * cos_sims[i] +
-                0.3 * sim_dtw[j]
-            ) * top_time_weights[j]
+            seq = past_price_seqs[i].astype(float)
+            seq_diff = np.diff(seq)
+            seq_diff = seq_diff / (np.std(seq_diff) + 1e-8)
+            futures[ex.submit(dtw_distance_early, cur_diff, seq_diff, window)] = j
+
+        for fut in as_completed(futures):
+            j = futures[fut]
+            try:
+                dtw_results[j] = fut.result()
+            except Exception:
+                dtw_results[j] = 1e18
+
+    sim_dtw = 1.0 / (1.0 + dtw_results)
+
+    # ---- time decay ----
+    ages = np.arange(len(past_matrix))[::-1]
+    top_ages = ages[top_idx]
+    top_time_weights = np.exp(-top_ages / tau)
+
+    # ---- çµ±åˆ ----
+    for j, i in enumerate(top_idx):
+        sims[i] = (0.7 * cos_sims[i] + 0.3 * sim_dtw[j]) * top_time_weights[j]
 
     return sims, cos_sims
 # ============================================================
-# PART 4 / 5 : ó‘Ô”»’èiZ-score “®“I”»’èj
+# PART 4 / 5 : çŠ¶æ…‹åˆ¤å®šï¼ˆZ-score å‹•çš„åˆ¤å®šï¼‰
 # ============================================================
 
 import numpy as np
 import pandas as pd
 import json
 # ==============================
-# ó‘Ô”»’èƒƒWƒbƒNiC³”Åj
+# çŠ¶æ…‹åˆ¤å®šãƒ­ã‚¸ãƒƒã‚¯ï¼ˆä¿®æ­£ç‰ˆï¼‰
 # ==============================
 def determine_state_dynamic(cur_window: pd.DataFrame, atr_series: np.ndarray, N: int) -> str:
     closes = cur_window["Close"].values
@@ -521,36 +509,45 @@ def determine_state_dynamic(cur_window: pd.DataFrame, atr_series: np.ndarray, N:
     lows   = cur_window["Low"].values
     opens  = cur_window["Open"].values
 
-    # ATR
     atr_val  = max(1e-8, atr_series[-1])
-    atr_prev = atr_series[-2] if len(atr_series) >= 2 else atr_val
 
-    # slope_normiŒX‚« / ATRj
-    x = np.arange(N)
-    if N >= 2:
+    # ---- å‚¾ãï¼ˆã‚¯ãƒ­ãƒ¼ã‚ºã®ç·šå½¢å›å¸°ï¼‰ ----
+    x = np.arange(len(closes))
+    if len(closes) >= 2:
         A = np.vstack([x, np.ones_like(x)]).T
         m, _ = np.linalg.lstsq(A, closes, rcond=None)[0]
     else:
         m = 0.0
     slope_norm = m / atr_val
 
-    # slope_zi‰¿Ši•Ï‰»ƒx[ƒXj
-    deltas = np.diff(closes)
-    if len(deltas) < 10:
+    # éå»ã®å‚¾ãåˆ†å¸ƒï¼ˆATR æ­£è¦åŒ–æ¸ˆã¿ï¼‰
+    lookback = min(300, len(atr_series), len(cur_window) + len(atr_series))
+    # éå» N æœ¬ãšã¤ã®å‚¾ãã‚’ã–ã£ãã‚Šå–ã‚‹
+    slope_hist = []
+    if lookback > N + 10:
+        for i in range(N, lookback):
+            seg = closes[max(0, i - N):i]
+            if len(seg) >= 2:
+                xx = np.arange(len(seg))
+                AA = np.vstack([xx, np.ones_like(xx)]).T
+                mm, _ = np.linalg.lstsq(AA, seg, rcond=None)[0]
+                slope_hist.append(mm / max(1e-8, atr_val))
+    if len(slope_hist) < 10:
         slope_z = 0.0
     else:
-        slope_z = (slope_norm - np.mean(deltas)) / (np.std(deltas) + 1e-8)
+        slope_hist = np.array(slope_hist)
+        slope_z = (slope_norm - slope_hist.mean()) / (slope_hist.std() + 1e-8)
 
-    # ATR Z-score
-    lookback = min(200, len(atr_series))
-    atr_hist = atr_series[-lookback:]
+    # ---- ATR Z-score ----
+    atr_lookback = min(300, len(atr_series))
+    atr_hist = atr_series[-atr_lookback:]
     atr_z = (atr_val - atr_hist.mean()) / (atr_hist.std() + 1e-8)
 
-    # HH / LL
+    # ---- HH / LL ----
     hh = highs[-1] > np.max(highs[:-1]) if len(highs) > 1 else False
     ll = lows[-1]  < np.min(lows[:-1]) if len(lows) > 1 else False
 
-    # ƒuƒŒƒCƒN‹——£
+    # ---- ãƒ–ãƒ¬ã‚¤ã‚¯è·é›¢ ----
     range_high = np.max(highs)
     range_low  = np.min(lows)
     close_last = closes[-1]
@@ -561,14 +558,14 @@ def determine_state_dynamic(cur_window: pd.DataFrame, atr_series: np.ndarray, N:
     elif close_last < range_low:
         breakout_dist = (range_low - close_last) / atr_val
 
-    # ƒuƒŒƒCƒN Z-score
+    # éå»ãƒ¬ãƒ³ã‚¸å¹… / ATR ã®åˆ†å¸ƒã‹ã‚‰ Z-score
     range_hist = []
-    if lookback > N + 10:
-        for i in range(N, lookback):
-            h = highs[max(0, i - N):i]
-            lo = lows[max(0, i - N):i]
-            if len(h) > 0:
-                range_hist.append((h.max() - lo.min()) / max(1e-8, atr_hist[i - 1]))
+    if atr_lookback > N + 10:
+        for i in range(N, atr_lookback):
+            # ATR ã¨åŒã˜ã‚¤ãƒ³ãƒ‡ãƒƒã‚¯ã‚¹ã§ãƒ¬ãƒ³ã‚¸å¹…ã‚’è¿‘ä¼¼
+            # ã“ã“ã§ã¯ cur_window ã®ã‚¹ã‚±ãƒ¼ãƒ«ã§ä»£ç”¨ï¼ˆå³å¯†ã•ã‚ˆã‚Šä¸€è²«æ€§å„ªå…ˆï¼‰
+            rng = (range_high - range_low) / max(1e-8, atr_hist[i - 1])
+            range_hist.append(rng)
 
     if len(range_hist) < 10:
         breakout_z = 0.0
@@ -576,45 +573,33 @@ def determine_state_dynamic(cur_window: pd.DataFrame, atr_series: np.ndarray, N:
         range_hist = np.array(range_hist)
         breakout_z = (breakout_dist - range_hist.mean()) / (range_hist.std() + 1e-8)
 
-    # price_signali•ûŒü‚Ì˜A‘±«j
+    # ---- ç›´è¿‘ã®å€¤å‹•ãæ–¹å‘ ----
     bodies = closes - opens
     signs = np.sign(bodies[-5:]) if len(bodies) >= 5 else np.sign(bodies)
     price_signal = int(np.sign(np.sum(signs)))  # -1 / 0 / +1
 
-    # 1. ‹­‚¢ƒgƒŒƒ“ƒh
-    if slope_z > 0.7 and (hh or (len(lows) >= 2 and lows[-1] >= lows[-2])):
+    # ---- çŠ¶æ…‹åˆ¤å®š ----
+    # 1. å¼·ã„ãƒˆãƒ¬ãƒ³ãƒ‰
+    if slope_z > 0.7 and hh:
         return "trend_up"
-
-    if slope_z < -0.7 and (ll or (len(highs) >= 2 and highs[-1] <= highs[-2])):
+    if slope_z < -0.7 and ll:
         return "trend_down"
 
-    # 2. ƒuƒŒƒCƒNƒAƒEƒg
+    # 2. ãƒ–ãƒ¬ã‚¤ã‚¯ã‚¢ã‚¦ãƒˆ
     if breakout_z > 1.2 and abs(price_signal) == 1:
         return "range_breakout"
 
-    # 3. ƒŒƒ“ƒW
+    # 3. ãƒ¬ãƒ³ã‚¸
     if abs(slope_z) < 0.3 and abs(atr_z) < 0.5:
         mid = (range_high + range_low) / 2
         return "range_up" if close_last > mid else "range_down"
 
-    # 4. ƒgƒŒƒ“ƒhI—¹i‹­‰»”Åj
-    trend_up_end = (
-        (not hh) +
-        (slope_z < 0.2) +
-        (atr_z < -0.5) +
-        (price_signal < 0)
-    ) >= 2
-
-    trend_down_end = (
-        (not ll) +
-        (slope_z > -0.2) +
-        (atr_z < -0.5) +
-        (price_signal > 0)
-    ) >= 2
+    # 4. ãƒˆãƒ¬ãƒ³ãƒ‰çµ‚äº†æ°—å‘³
+    trend_up_end = (slope_z < 0.2 and atr_z < -0.3 and price_signal <= 0)
+    trend_down_end = (slope_z > -0.2 and atr_z < -0.3 and price_signal >= 0)
 
     if trend_up_end:
         return "trend_up_end"
-
     if trend_down_end:
         return "trend_down_end"
 
@@ -622,51 +607,47 @@ def determine_state_dynamic(cur_window: pd.DataFrame, atr_series: np.ndarray, N:
 
 
 # ==============================
-# ƒƒCƒ“—\‘ªƒƒWƒbƒNi“‡”Åj
+# ãƒ¡ã‚¤ãƒ³äºˆæ¸¬ãƒ­ã‚¸ãƒƒã‚¯ï¼ˆçµ±åˆç‰ˆï¼‰
 # ==============================
 def predict_fx(df: pd.DataFrame, N: int) -> dict:
     """
-    ÅI—\‘ªƒƒWƒbƒNi“‡”Åj
-    --------------------------------------------------------
-    “ü—Í:
-        df : OHLCV DataFrame
-        N  : ƒEƒBƒ“ƒhƒE’·
-
-    o—Í:
-        {
-            "last_close": float,
-            "high_est": float,
-            "low_est": float,
-            "direction": int,
-            "confidence": float,
-            "range_position": float,
-            "state": str
-        }
-    --------------------------------------------------------
+    ä¿®æ­£ç‰ˆ predict_fx
+    - é¡ä¼¼åº¦ãƒ­ã‚¸ãƒƒã‚¯ä¿®æ­£
+    - DTW æ­£è¦åŒ–
+    - ç‰¹å¾´é‡ã‚¹ã‚±ãƒ¼ãƒ«æ¨™æº–åŒ–
+    - confidence å†è¨­è¨ˆ
+    - direction ãƒ­ã‚¸ãƒƒã‚¯å®‰å®šåŒ–
     """
 
-    # •K{—ñƒ`ƒFƒbƒN
+    # -------------------------
+    # å…¥åŠ›ãƒã‚§ãƒƒã‚¯
+    # -------------------------
     required_cols = ['Open', 'High', 'Low', 'Close']
     for c in required_cols:
         if c not in df.columns:
             raise ValueError(f"DataFrame must contain column: {c}")
 
+    # Volume ãŒç„¡ã„å ´åˆã¯ 1 ã‚’å…¥ã‚Œã‚‹ï¼ˆ0 ã¯å£Šã‚Œã‚‹ï¼‰
     if 'Volume' not in df.columns:
-        df['Volume'] = 0.0
+        df['Volume'] = 1.0
 
     total = len(df)
     if total < N + 3:
         raise ValueError("Not enough bars for the requested N and next3 calculation.")
 
-    # ATR ŒvZ
-    ATR_PERIOD = max(14, N)
+    # -------------------------
+    # ATR è¨ˆç®—ï¼ˆå›ºå®š 14ï¼‰
+    # -------------------------
+    ATR_PERIOD = 14
     highs = df['High'].values
     lows = df['Low'].values
     closes = df['Close'].values
 
     atr_series = fast_atr(highs, lows, closes, ATR_PERIOD)
 
-    # “Á’¥—Ê
+    # -------------------------
+    # ç‰¹å¾´é‡ç”Ÿæˆ
+    # -------------------------
     price_shape_mat = build_price_shape_features(df, N, atr_series)
     market_vol_mat = build_market_vol_features(df, N, atr_series)
     pattern_mat = np.hstack([price_shape_mat, market_vol_mat])
@@ -674,30 +655,32 @@ def predict_fx(df: pd.DataFrame, N: int) -> dict:
     windows = total - N + 1
     current_vec = pattern_mat[-1]
 
-    # —Ş—ƒpƒ^[ƒ“”ÍˆÍ
+    # -------------------------
+    # éå»ãƒ‘ã‚¿ãƒ¼ãƒ³æŠ½å‡º
+    # -------------------------
     valid_count_full = windows - 1
-    if valid_count_full <= 0:
-        raise ValueError("Not enough historical windows for similarity search.")
-
     start_idx = max(0, valid_count_full - MAX_HISTORY_WINDOWS)
     end_idx = valid_count_full
     valid_count = end_idx - start_idx
 
     past_mat = pattern_mat[start_idx:end_idx]
 
-    # ‰¿ŠiŒn—ñiDTW —pj
-    closes_seq = closes
+    # -------------------------
+    # ä¾¡æ ¼ã‚·ãƒ¼ã‚±ãƒ³ã‚¹ï¼ˆDTW ç”¨ï¼‰
+    # -------------------------
     price_seqs = []
     for i in range(windows):
         s = i
         e = i + N
-        price_seqs.append(closes_seq[s:e])
+        price_seqs.append(closes[s:e])
     price_seqs = np.array(price_seqs, dtype=float)
 
     current_price_seq = price_seqs[-1]
     past_price_seqs = price_seqs[start_idx:end_idx]
 
-    # next3 ƒ‰ƒxƒ‹
+    # -------------------------
+    # next3 ãƒ©ãƒ™ãƒ«ç”Ÿæˆ
+    # -------------------------
     direction_labels = np.zeros(valid_count, dtype=float)
     strength_labels = np.zeros(valid_count, dtype=float)
     volatility_labels = np.zeros(valid_count, dtype=float)
@@ -731,7 +714,9 @@ def predict_fx(df: pd.DataFrame, N: int) -> dict:
         next3_high_norm[idx] = move_up_norm
         next3_low_norm[idx]  = -move_down_norm
 
-    # —Ş—“xiƒRƒTƒCƒ“ + DTW + ŠÔŒ¸Šj
+    # -------------------------
+    # é¡ä¼¼åº¦è¨ˆç®—ï¼ˆä¿®æ­£ç‰ˆï¼‰
+    # -------------------------
     atr_last = atr_series[-1]
     atr_hist = atr_series[-200:] if len(atr_series) > 200 else atr_series
     atr_z = (atr_last - atr_hist.mean()) / (atr_hist.std() + 1e-8)
@@ -752,48 +737,41 @@ def predict_fx(df: pd.DataFrame, N: int) -> dict:
         dtw_window=max(5, N // 2),
     )
 
-    # —Ş—ƒpƒ^[ƒ“W–ñ
+    # -------------------------
+    # é¡ä¼¼ãƒ‘ã‚¿ãƒ¼ãƒ³æŠ½å‡ºï¼ˆä¿®æ­£ç‰ˆï¼‰
+    # -------------------------
     SIM_THRESHOLD = 0.4
     similar_mask = sims > SIM_THRESHOLD
     similar_count = int(np.sum(similar_mask))
     total_patterns = len(sims)
 
-    if similar_count > 0:
-        avg_dir = np.mean(direction_labels[similar_mask])
-        pattern_signal = int(np.sign(avg_dir)) if avg_dir != 0 else 0
-
-        avg_strength   = float(np.mean(strength_labels[similar_mask]))
-        avg_volatility = float(np.mean(volatility_labels[similar_mask]))
-        avg_high_norm  = float(np.mean(next3_high_norm[similar_mask]))
-        avg_low_norm   = float(np.mean(next3_low_norm[similar_mask]))
-
-        pattern_confidence = float(np.mean(sims[similar_mask]) * (similar_count / total_patterns))
-
+    if similar_count > 5:
+        idx_use = np.where(similar_mask)[0]
     else:
-        top_k2 = min(10, total_patterns)
-        top_idx = np.argsort(-sims)[:top_k2]
+        top_k2 = min(20, total_patterns)
+        idx_use = np.argsort(-sims)[:top_k2]
 
-        avg_dir = np.mean(direction_labels[top_idx])
-        pattern_signal = int(np.sign(avg_dir)) if avg_dir != 0 else 0
+    avg_dir = np.mean(direction_labels[idx_use])
+    pattern_signal = int(np.sign(avg_dir)) if avg_dir != 0 else 0
 
-        avg_strength   = float(np.mean(strength_labels[top_idx]))
-        avg_volatility = float(np.mean(volatility_labels[top_idx]))
-        avg_high_norm  = float(np.mean(next3_high_norm[top_idx]))
-        avg_low_norm   = float(np.mean(next3_low_norm[top_idx]))
+    avg_strength   = float(np.clip(np.mean(strength_labels[idx_use]),   -3.0, 3.0))
+    avg_volatility = float(np.clip(np.mean(volatility_labels[idx_use]),  0.0, 5.0))
+    avg_high_norm  = float(np.clip(np.mean(next3_high_norm[idx_use]),  -3.0, 3.0))
+    avg_low_norm   = float(np.clip(np.mean(next3_low_norm[idx_use]),   -3.0, 3.0))
 
-        pattern_confidence = float(np.mean(sims[top_idx]) * (top_k2 / total_patterns))
+    # confidence ã¯ã€Œé¡ä¼¼åº¦ã®å¹³å‡ã€ã‚’ç´ ç›´ã«ä½¿ã†
+    pattern_confidence = float(np.clip(np.mean(sims[idx_use]), 0.0, 1.0))
 
-    avg_strength   = float(np.clip(avg_strength,   -3.0, 3.0))
-    avg_volatility = float(np.clip(avg_volatility,  0.0, 5.0))
-    avg_high_norm  = float(np.clip(avg_high_norm,  -3.0, 3.0))
-    avg_low_norm   = float(np.clip(avg_low_norm,   -3.0, 3.0))
-
-    # ó‘Ô”»’è
+    # -------------------------
+    # çŠ¶æ…‹åˆ¤å®šï¼ˆä¿®æ­£ç‰ˆï¼‰
+    # -------------------------
     cur_start = total - N
     cur_window = df.iloc[cur_start:cur_start + N].reset_index(drop=True)
     state = determine_state_dynamic(cur_window, atr_series, N)
 
-    # range_position ÄŒvZ
+    # -------------------------
+    # range_position
+    # -------------------------
     highs_win = cur_window["High"].values
     lows_win  = cur_window["Low"].values
     closes_win = cur_window["Close"].values
@@ -804,105 +782,59 @@ def predict_fx(df: pd.DataFrame, N: int) -> dict:
 
     range_position = (last_close_win - range_low) / max((range_high - range_low), 1e-8)
 
-    # price_signali•ûŒü‚Ì˜A‘±«j
+    # -------------------------
+    # price_signal
+    # -------------------------
     bodies = cur_window['Close'].values - cur_window['Open'].values
     signs = np.sign(bodies[-5:]) if len(bodies) >= 5 else np.sign(bodies)
     price_signal = int(np.sign(np.sum(signs)))
 
-    # directionistate ‚Æ–µ‚‚µ‚È‚¢ÅI•ûŒüj
+    # -------------------------
+    # directionï¼ˆä¿®æ­£ç‰ˆï¼‰
+    # -------------------------
     if state == "trend_up":
         direction = 1
-
     elif state == "trend_down":
         direction = -1
-
     elif state == "range_up":
         direction = 1 if range_position > 0.5 else -1
-
     elif state == "range_down":
         direction = -1 if range_position < 0.5 else 1
-
     elif state == "range_breakout":
         direction = 1 if price_signal > 0 else -1
-
     elif state == "trend_up_end":
-        combined_dir = price_signal + pattern_signal
-        direction = -1 if combined_dir <= 0 else 1
-
+        combined = price_signal + pattern_signal
+        direction = -1 if combined <= 0 else 1
     elif state == "trend_down_end":
-        combined_dir = price_signal + pattern_signal
-        direction = 1 if combined_dir >= 0 else -1
+        combined = price_signal + pattern_signal
+        direction = 1 if combined >= 0 else -1
+    else:  # neutral
+        combined = price_signal + pattern_signal
+        direction = 1 if combined > 0 else -1
 
-    elif state == "neutral":
-        combined_dir = price_signal + pattern_signal
-        direction = 1 if combined_dir > 0 else -1
+    # -------------------------
+    # é«˜å€¤ãƒ»å®‰å€¤äºˆæ¸¬
+    # -------------------------
+    high_est = last_close_win + avg_high_norm * atr_last
+    low_est  = last_close_win + avg_low_norm  * atr_last
 
-    else:
-        direction = int(np.sign(price_signal + pattern_signal)) or 1
+    # -------------------------
+    # confidenceï¼ˆä¿®æ­£ç‰ˆï¼‰
+    # -------------------------
+    confidence = float(np.clip(pattern_confidence, 0.05, 0.95))
 
-    # signal_consistency
-    signals = np.array([price_signal, pattern_signal], dtype=float)
-    non_zero = signals[signals != 0]
-    signal_consistency = float(abs(np.mean(np.sign(non_zero)))) if len(non_zero) > 0 else 0.0
-
-    # confidenceistate •Ê’²®j
-    recent_vol = cur_window['Volume'].values[-1]
-    vol_mean = np.mean(cur_window['Volume'].values) + 1e-8
-    vol_factor = min(1.0, recent_vol / vol_mean) if vol_mean > 0 else 0.0
-
-    raw_conf = (
-        0.5 * signal_consistency +
-        0.3 * pattern_confidence +
-        0.2 * vol_factor
-    )
-
-    conf = 1 / (1 + np.exp(-(2.5 * raw_conf - 1.2)))
-    confidence = float(np.clip(conf, 0.0, 1.0))
-
-    if state == "trend_end":
-        confidence = min(confidence, 0.6)
-    elif state in ["range_up", "range_down"]:
-        confidence = min(confidence, 0.7)
-    elif state == "range_breakout":
-        confidence = min(confidence, 0.85)
-    # trend_up / trend_down ‚Í‚»‚Ì‚Ü‚Ü
-
-    # —\‘ªƒŒƒ“ƒW
-    last_close = float(closes[-1])
-    atr_last = max(1e-8, atr_series[-1])
-
-    est_high = last_close + avg_high_norm * atr_last
-    est_low  = last_close + avg_low_norm  * atr_last
-
-    conf_adj = 0.3 + 0.7 * (1 - confidence)
-
-    high_est = est_high + conf_adj * atr_last
-    low_est  = est_low  - conf_adj * atr_last
-
-    if pattern_signal == 0:
-        high_est = last_close + 0.3 * atr_last
-        low_est  = last_close - 0.3 * atr_last
-
-    result = {
-        "last_close": float(last_close),
+    return {
+        "last_close": float(last_close_win),
         "high_est": float(high_est),
         "low_est": float(low_est),
         "direction": int(direction),
         "confidence": float(confidence),
         "range_position": float(range_position),
-        "state": state,
+        "state": state
     }
 
-    try:
-        with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
-
-    return result
-
 # ------------------------------------------------------------
-# CSV “Ç‚İ‚İ + Às
+# CSV èª­ã¿è¾¼ã¿ + å®Ÿè¡Œ
 # ------------------------------------------------------------
 def load_and_predict(input_csv: str = input_path, N: int = 20):
     df = pd.read_csv(input_csv)
